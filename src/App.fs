@@ -19,9 +19,7 @@ type Todo = {
 
 // adaptive state
 
-let todos = clist
-              [ cval (Todo.create "Learn F# Adaptive")
-                cval (Todo.create "Have fun with Lit!") ]
+let todos = clist [ Todo.create "Learn F# Adaptive";  Todo.create "Have fun with Lit!" ]
 let editing = cval<Guid option> None
 let sorted = cval false
 
@@ -36,7 +34,7 @@ let NewTodoEl () =
         | Some input ->
             match input.value.Trim() with
             | "" -> ()
-            | v -> transact (fun () -> todos.InsertAt(0, cval <| Todo.create v)) |> ignore
+            | v -> transact (fun () -> todos.InsertAt(0, Todo.create v)) |> ignore
             input.value <- ""
 
     html $"""
@@ -59,9 +57,8 @@ let NewTodoEl () =
 
 
 [<HookComponent>]
-let TodoEl (todoIndex:Index) (aTodo: cval<Todo>) =
+let TodoEl (todoIndex:Index) (todo: Todo) =
     Hook.useHmr(hmr)
-    let todo, setTodo = Hook.useCVal aTodo
     let editing, setEditing = Hook.useCVal editing
     let isEditing = editing = Some todo.Id
 
@@ -88,7 +85,8 @@ let TodoEl (todoIndex:Index) (aTodo: cval<Todo>) =
     }"""
 
     if isEditing then
-        let applyEdit _ = inputRef.Value |> Option.iter (fun input -> setTodo { todo with Text = input.value.Trim() })
+        let applyEdit _ = inputRef.Value |> Option.iter (fun input ->
+            transact (fun () -> todos.[todoIndex] <- { todo with Text = input.value.Trim() }))
         let cancelEdit _ = setEditing None
 
         html $"""
@@ -115,7 +113,7 @@ let TodoEl (todoIndex:Index) (aTodo: cval<Todo>) =
                 <div class="column is-9">
                     <p class="subtitle"
                         style="cursor: pointer; user-select: none;"
-                        @dblclick={Ev(fun _ -> transact (fun _ -> setEditing <| Some todo.Id))}>
+                        @dblclick={Ev(fun _ -> setEditing <| Some todo.Id)}>
                         {todo.Text}
                     </p>
                 </div>
@@ -123,7 +121,7 @@ let TodoEl (todoIndex:Index) (aTodo: cval<Todo>) =
                     <!-- TODO: Provide aria besides color to indicate if item is complete or not -->
                     <button class={Lit.classes ["button", true; "is-success", todo.Done]}
                         aria-label={if todo.Done then "Mark uncompleted" else "Mark completed"}
-                        @click={Ev(fun _ -> setTodo { todo with Done = not todo.Done })}>
+                        @click={Ev(fun _ -> transact (fun () -> todos.[todoIndex] <-  { todo with Done = not todo.Done }))}>
                         <i class="fa fa-check"></i>
                     </button>
                     <button class="button is-primary" aria-label="Edit"
@@ -144,12 +142,12 @@ let todoListHtml = adaptive {
     let! sorted = sorted
     let orderedTodos =
         if sorted then
-            todoList |> IndexList.sortBy (fun todo -> todo.Value.Text)
+            todoList |> IndexList.sortBy (fun todo -> todo.Text)
         else
             todoList
     return
         orderedTodos
-        |> IndexList.mapi (fun i todo -> todo.Value.Id, TodoEl i todo)
+        |> IndexList.mapi (fun i todo -> todo.Id, TodoEl i todo)
         |> Lit.mapUnique (fst >> string) snd
 }
 
