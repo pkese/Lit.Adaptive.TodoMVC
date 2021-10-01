@@ -21,11 +21,13 @@ type Todo = {
 
 let todos = clist [ Todo.create "Learn F# Adaptive";  Todo.create "Have fun with Lit!" ]
 let editing = cval<Guid option> None
-let sorted = cval false
+let showing = cval false
+let displayTodos = cval false
 
 let orderedTodos = adaptive {
     let! todoList = (todos :> IAdaptiveIndexList<_>).Content
-    let! sorted = sorted
+    let! sorted = showing
+    printfn "... now ordering adaptive list: sorted=%b" sorted
     return
         if sorted then
             todoList |> IndexList.sortBy (fun todo -> todo.Text)
@@ -94,6 +96,8 @@ let TodoEl (todoIndex:Index) (todo: Todo) =
         margin: 5px 0;
     }"""
 
+    printfn "rendering todo: '%s'" todo.Text
+
     if isEditing then
         let applyEdit _ = inputRef.Value |> Option.iter (fun input ->
             transact (fun () -> todos.[todoIndex] <- { todo with Text = input.value.Trim() }))
@@ -146,11 +150,26 @@ let TodoEl (todoIndex:Index) (todo: Todo) =
             </div>
         """
 
+let todosAsAdaptiveHtml = adaptive {
+    let! todos = orderedTodos
+    printfn "... now rendering todos into adaptive html"
+    return
+        todos
+            |> IndexList.mapi (fun i todo -> todo.Id, TodoEl i todo)
+            |> Lit.mapUnique (fst >> string) snd
+}
+
+[<HookComponent>]
+let todoListComponent () =
+    let todos = Hook.useAVal todosAsAdaptiveHtml
+    html $"""{ todos }"""
+
 [<HookComponent>]
 let app () =
     Hook.useHmr(hmr)
-    let todos = Hook.useAVal orderedTodos
-    let sorted, setSorted = Hook.useCVal sorted
+    let sorted, setSorted = Hook.useCVal showing
+    let displayTodos, setDisplayTodos = Hook.useCVal displayTodos
+
 
     html $"""
       <div style="margin: 0 auto; max-width: 800px; padding: 20px;">
@@ -158,9 +177,10 @@ let app () =
         { NewTodoEl () }
         <input type=checkbox ?checked={sorted} @change={Ev(fun _ -> setSorted (not sorted))} />
         <label>Sort by description</label>
-        { todos
-            |> IndexList.mapi (fun i todo -> todo.Id, TodoEl i todo)
-            |> Lit.mapUnique (fst >> string) snd }
+        <br/>
+        <input type=checkbox ?checked={displayTodos} @change={Ev(fun _ -> setDisplayTodos (not displayTodos))} />
+        <label>Display todos after sorting is applied</label>
+        { if displayTodos then todoListComponent() else Lit.nothing }
       </div>
     """
 
