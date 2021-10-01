@@ -21,12 +21,12 @@ type Todo = {
 
 let todos = clist [ Todo.create "Learn F# Adaptive";  Todo.create "Have fun with Lit!" ]
 let editing = cval<Guid option> None
-let showing = cval false
+let sorted = cval false
 let displayTodos = cval false
 
 let orderedTodos = adaptive {
     let! todoList = (todos :> IAdaptiveIndexList<_>).Content
-    let! sorted = showing
+    let! sorted = sorted
     printfn "... now ordering adaptive list: sorted=%b" sorted
     return
         if sorted then
@@ -150,7 +150,7 @@ let TodoEl (todoIndex:Index) (todo: Todo) =
             </div>
         """
 
-let todosAsAdaptiveHtml = adaptive {
+let todosAsAdaptiveHtml : aval<TemplateResult> = adaptive {
     let! todos = orderedTodos
     printfn "... now rendering todos into adaptive html"
     return
@@ -167,7 +167,7 @@ let todoListComponent () =
 [<HookComponent>]
 let app () =
     Hook.useHmr(hmr)
-    let sorted, setSorted = Hook.useCVal showing
+    let sorted, setSorted = Hook.useCVal sorted
     let displayTodos, setDisplayTodos = Hook.useCVal displayTodos
 
 
