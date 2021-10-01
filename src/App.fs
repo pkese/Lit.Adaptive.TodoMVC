@@ -23,6 +23,16 @@ let todos = clist [ Todo.create "Learn F# Adaptive";  Todo.create "Have fun with
 let editing = cval<Guid option> None
 let sorted = cval false
 
+let orderedTodos = adaptive {
+    let! todoList = (todos :> IAdaptiveIndexList<_>).Content
+    let! sorted = sorted
+    return
+        if sorted then
+            todoList |> IndexList.sortBy (fun todo -> todo.Text)
+        else
+            todoList
+}
+
 
 [<HookComponent>]
 let NewTodoEl () =
@@ -136,25 +146,10 @@ let TodoEl (todoIndex:Index) (todo: Todo) =
             </div>
         """
 
-
-let todoListHtml = adaptive {
-    let! todoList = (todos :> IAdaptiveIndexList<_>).Content
-    let! sorted = sorted
-    let orderedTodos =
-        if sorted then
-            todoList |> IndexList.sortBy (fun todo -> todo.Text)
-        else
-            todoList
-    return
-        orderedTodos
-        |> IndexList.mapi (fun i todo -> todo.Id, TodoEl i todo)
-        |> Lit.mapUnique (fst >> string) snd
-}
-
 [<HookComponent>]
 let app () =
     Hook.useHmr(hmr)
-    let todos = Hook.useAVal todoListHtml
+    let todos = Hook.useAVal orderedTodos
     let sorted, setSorted = Hook.useCVal sorted
 
     html $"""
@@ -163,10 +158,11 @@ let app () =
         { NewTodoEl () }
         <input type=checkbox ?checked={sorted} @change={Ev(fun _ -> setSorted (not sorted))} />
         <label>Sort by description</label>
-        { todos }
+        { todos
+            |> IndexList.mapi (fun i todo -> todo.Id, TodoEl i todo)
+            |> Lit.mapUnique (fst >> string) snd }
       </div>
     """
-
 
 // mount component
 Lit.render (document.getElementById "app-container") (app ())
