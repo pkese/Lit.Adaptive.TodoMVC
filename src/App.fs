@@ -1,57 +1,174 @@
 module Lit.TodoMVC.App
 
-open Elmish
+open System
+open Browser.Types
+open Browser
 open Lit
-open Components
+open FSharp.Data.Adaptive
 
-let init() =
-    let todos = [ Todo.New("Learn F#"); Todo.New("Have fun with Lit!") ]
-    { Todos = todos; Edit = None }, Cmd.none
+type Todo = {
+    Id: Guid
+    Text: string
+    Done: bool
+} with
+    static member create text =
+        { Id = Guid.NewGuid()
+          Text = text
+          Done = false }
 
-let update msg model =
-    match msg with
-    | AddNewTodo description ->
-        let todo = Todo.New(description)
-        { model with Todos = todo::model.Todos ; Edit = None }, Cmd.none
 
-    | DeleteTodo guid ->
-        let todos = model.Todos |> List.filter (fun t -> t.Id <> guid)
-        { model with Todos = todos }, Cmd.none
+// adaptive state
 
-    | ToggleCompleted guid ->
-        let todos = model.Todos |> List.map (fun t ->
-            if t.Id = guid then { t with Completed = not t.Completed } else t)
-        { model with Todos = todos }, Cmd.none
+let todos = clist
+              [ cval (Todo.create "Learn F# Adaptive")
+                cval (Todo.create "Have fun with Lit!") ]
+let editing = cval<Guid option> None
+let sorted = cval false
 
-    | StartEdit edit  ->
-        { model with Edit = Some edit }, Cmd.none
 
-    | FinishEdit None ->
-        { model with Edit = None }, Cmd.none
+[<HookComponent>]
+let NewTodoEl () =
+    Hook.useHmr(hmr)
+    let inputRef = Hook.useRef<HTMLInputElement>()
+    let addNewTodo _ =
+        match inputRef.Value with
+        | None -> ()
+        | Some input ->
+            match input.value.Trim() with
+            | "" -> ()
+            | v -> transact (fun () -> todos.InsertAt(0, cval <| Todo.create v)) |> ignore
+            input.value <- ""
 
-    | FinishEdit(Some t1) ->
-        let todos = model.Todos |> List.map (fun t2 ->
-            if t1.Id = t2.Id then t1 else t2)
-        { model with Todos = todos; Edit = None }, Cmd.none
+    html $"""
+        <div class="field has-addons">
+            <div class="control is-expanded">
+                <input {Lit.ref inputRef}
+                    type="text"
+                    class="input is-medium"
+                    aria-label="New todo description"
+                    @keyup={Ev(onEnterOrEscape addNewTodo ignore)}>
+            </div>
+            <div class="control">
+                <button class="button is-primary is-medium" aria-label="Add new todo"
+                    @click={Ev addNewTodo}>
+                    <i class="fa fa-plus"></i>
+                </button>
+            </div>
+        </div>
+    """
 
-let view model dispatch =
+
+[<HookComponent>]
+let TodoEl (todoIndex:Index) (aTodo: cval<Todo>) =
+    Hook.useHmr(hmr)
+    let todo, setTodo = Hook.useCVal aTodo
+    let editing, setEditing = Hook.useCVal editing
+    let isEditing = editing = Some todo.Id
+
+    let hasFocus = Hook.useRef(false)
+    let inputRef = Hook.useRef<HTMLInputElement>()
+
+    Hook.useEffectOnChange(isEditing, function
+        | true when not hasFocus.Value ->
+            inputRef.Value |> Option.iter (fun i -> i.select())
+        | _ -> ())
+
+    let transition =
+        Hook.useTransition(
+            ms = 500,
+            cssBefore = "opacity: 0; transform: scale(2);",
+            cssAfter = "opacity: 0; transform: scale(0.1);",
+            onComplete = fun isIn -> if not isIn then transact (fun _ -> todos.Remove todoIndex |> ignore)
+        )
+
+    let style = transition.css + inline_css """.{
+        border: 2px solid lightgray;
+        border-radius: 10px;
+        margin: 5px 0;
+    }"""
+
+    if isEditing then
+        let applyEdit _ = inputRef.Value |> Option.iter (fun input -> setTodo { todo with Text = input.value.Trim() })
+        let cancelEdit _ = setEditing None
+
+        html $"""
+            <div class="columns" style={style}>
+                <div class="column is-10">
+                    <input {Lit.ref inputRef}
+                        type="text"
+                        class="input"
+                        aria-label="Edit todo"
+                        value={todo.Text}
+                        @keyup={Ev(onEnterOrEscape applyEdit cancelEdit)}
+                        @blur={Ev cancelEdit}>
+                </div>
+                <div class="column is-2">
+                    <button class="button is-primary" aria-label="Save edit"
+                        @click={Ev applyEdit}>
+                        <i class="fa fa-save"></i>
+                    </button>
+                </div>
+            </div>"""
+    else
+        html $"""
+            <div class="columns" style={style}>
+                <div class="column is-9">
+                    <p class="subtitle"
+                        style="cursor: pointer; user-select: none;"
+                        @dblclick={Ev(fun _ -> transact (fun _ -> setEditing <| Some todo.Id))}>
+                        {todo.Text}
+                    </p>
+                </div>
+                <div class="column is-3">
+                    <!-- TODO: Provide aria besides color to indicate if item is complete or not -->
+                    <button class={Lit.classes ["button", true; "is-success", todo.Done]}
+                        aria-label={if todo.Done then "Mark uncompleted" else "Mark completed"}
+                        @click={Ev(fun _ -> setTodo { todo with Done = not todo.Done })}>
+                        <i class="fa fa-check"></i>
+                    </button>
+                    <button class="button is-primary" aria-label="Edit"
+                        @click={Ev(fun _ -> setEditing <| Some todo.Id)}>
+                        <i class="fa fa-edit"></i>
+                    </button>
+                    <button class="button is-danger" aria-label="Delete"
+                        @click={Ev(fun _ -> transition.triggerLeave())}>
+                        <i class="fa fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        """
+
+
+let todoListHtml = adaptive {
+    let! todoList = (todos :> IAdaptiveIndexList<_>).Content
+    let! sorted = sorted
+    let orderedTodos =
+        if sorted then
+            todoList |> IndexList.sortBy (fun todo -> todo.Value.Text)
+        else
+            todoList
+    return
+        orderedTodos
+        |> IndexList.mapi (fun i todo -> todo.Value.Id, TodoEl i todo)
+        |> Lit.mapUnique (fst >> string) snd
+}
+
+[<HookComponent>]
+let app () =
+    Hook.useHmr(hmr)
+    let todos = Hook.useAVal todoListHtml
+    let sorted, setSorted = Hook.useCVal sorted
+
     html $"""
       <div style="margin: 0 auto; max-width: 800px; padding: 20px;">
         <p class="title">Lit.TodoMVC</p>
-        {NewTodoEl dispatch}
-        <!-- {model.Todos |> List.map (TodoEl dispatch model.Edit)} -->
-        {model.Todos |> Lit.mapUnique
-                (fun t -> string t.Id)
-                (TodoEl dispatch model.Edit)}
+        { NewTodoEl () }
+        <input type=checkbox ?checked={sorted} @change={Ev(fun _ -> setSorted (not sorted))} />
+        <label>Sort by description</label>
+        { todos }
       </div>
     """
 
-#if !TEST
-open Lit.Elmish
-open Lit.Elmish.HMR
 
-Program.mkProgram init update view
-|> Program.withLocalStorage
-|> Program.withLit "app-container"
-|> Program.run
-#endif
+// mount component
+Lit.render (document.getElementById "app-container") (app ())
